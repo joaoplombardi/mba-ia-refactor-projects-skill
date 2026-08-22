@@ -328,12 +328,17 @@ Mudanças de comportamento propostas, cada uma justificada por um finding:
    o banco de desenvolvimento será recriado via `seed.py` com as mesmas senhas documentadas, então
    `POST /login` continua funcionando com as credenciais atuais. Bancos pré-existentes exigem reset
    de senha.
-3. **`POST /tasks` e `PUT /tasks/<id>` com `priority` como string passam a devolver 400** em vez de
-   500 (F10). É a correção de um bug; clientes que hoje recebem 500 passam a receber uma mensagem
-   útil.
-4. **Timestamps passam a ser timezone-aware** (F08). O formato serializado muda de
-   `"2026-08-22 03:47:55.976971"` para `"2026-08-22 03:47:55.976971+00:00"`. É a única mudança de
-   shape em resposta de sucesso, e é consequência inevitável de sair de uma API deprecada.
+3. **`POST /tasks` e `PUT /tasks/<id>` deixam de devolver 500 para `priority` como string** (F10).
+   O validador faz o cast explícito, então uma string numérica (`"3"`) passa a ser aceita e devolve
+   201; apenas valores realmente inválidos (`"alta"`) ou fora da faixa devolvem 400 com mensagem.
+   Nenhum caso que hoje funciona deixa de funcionar — apenas o 500 desaparece.
+4. **Timestamps passam a ser timezone-aware internamente** (F08). O impacto no wire é menor do que
+   se poderia esperar: a coluna `db.DateTime` do SQLite não guarda offset, então `created_at`,
+   `updated_at` e `due_date` continuam serializando exatamente como antes
+   (`"2026-08-22 03:47:55.976971"`). Apenas os dois campos calculados no momento da requisição
+   passam a carregar o sufixo `+00:00`: `generated_at` em `GET /reports/summary` e `timestamp` em
+   `GET /health`. As comparações de prazo passam por `ensure_aware()`, que normaliza os valores
+   naive já gravados no banco — sem isso, a migração faria `is_overdue()` levantar `TypeError`.
 5. **`PUT /users/<id>` e `PUT /tasks/<id>` passam a aplicar as mesmas validações do create** (F09).
    Requisições hoje aceitas com dados inválidos passarão a receber 400.
 6. **Endpoints de `/categories` mudam de blueprint** (`report_bp` → `category_bp`) (F03). Os paths,
