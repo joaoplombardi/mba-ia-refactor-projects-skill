@@ -19,7 +19,12 @@ const config = {
     dbFile: process.env.DB_FILE || ':memory:',
     seedOnBoot: asBool(process.env.SEED_ON_BOOT, true),
     logLevel: process.env.LOG_LEVEL || 'info',
+    // Destructive admin operations are disabled unless this is set (finding F11).
+    adminApiToken: process.env.ADMIN_API_TOKEN || '',
     payment: {
+        // 'simulated' charges nothing; 'live' requires a real provider integration.
+        // Production gets no default — it must be stated explicitly.
+        mode: process.env.PAYMENT_MODE || '',
         // No default: a missing key must fail loudly rather than ship a fake one.
         gatewayKey: process.env.PAYMENT_GATEWAY_KEY || '',
         // Preserves the legacy approval rule so the api.http examples keep working.
@@ -29,7 +34,20 @@ const config = {
 
 config.isProduction = config.env === 'production';
 
+// Outside production the gateway defaults to the simulator, so the documented
+// api.http examples keep working with no setup.
+if (!config.payment.mode && !config.isProduction) {
+    config.payment.mode = 'simulated';
+}
+
 function validate() {
+    // Fail closed at boot: a simulated gateway must never reach production.
+    if (config.isProduction && config.payment.mode !== 'live') {
+        throw new Error(
+            'PAYMENT_MODE must be "live" in production — refusing to boot with a '
+                + 'simulated payment gateway (audit finding F05)',
+        );
+    }
     if (config.isProduction && !config.payment.gatewayKey) {
         throw new Error('PAYMENT_GATEWAY_KEY must be set in production');
     }
