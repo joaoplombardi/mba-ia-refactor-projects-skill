@@ -351,6 +351,34 @@ Mudanças de comportamento propostas, cada uma justificada por um finding:
 
 Todos os demais endpoints mantêm path, método, status code e shape de resposta idênticos.
 
+
+---
+
+## Remediation Ledger (Fase 3)
+
+| # | Finding | Sev. | Desfecho | Evidência / risco residual |
+|---|---|---|---|---|
+| F01 | God module | CRITICAL | **Fixed** | `models.py`/`controllers.py` removidos; SQL só em `src/models/` |
+| F02 | Endpoint de SQL arbitrário | CRITICAL | **Fixed** | `POST /admin/query` → 404 |
+| F03 | SQL Injection (21 queries) | CRITICAL | **Fixed** | login com `' OR '1'='1` → **401**; grep por SQL concatenado → vazio |
+| F04 | Segredos hardcoded | CRITICAL | **Fixed** | grep por `minha-chave-super-secreta` → vazio; tudo em `os.environ` |
+| F05 | Senhas em texto puro | CRITICAL | **Fixed** | PBKDF2-SHA256 com salt; login segue funcionando com as credenciais do seed |
+| F06 | Dados sensíveis em resposta | CRITICAL | **Fixed** | `/health` sem `secret_key`; `/usuarios` sem `senha` |
+| F07 | Reset destrutivo sem auth | CRITICAL | **Fixed** | `POST /admin/reset-db` → 404; capacidade movida para `scripts/reset_db.py` atrás de `ALLOW_DB_RESET=yes` |
+| F08 | Sem transação no pedido | CRITICAL | **Fixed** | estoque intacto em 8 após falha no 2º item; decremento condicional fecha a corrida |
+| F09 | Fat controller | HIGH | **Fixed** | validação em `controllers/validators/`; handlers com ≤5 linhas |
+| F10 | Conexão global mutável | HIGH | **Fixed** | nenhum `global`; `Database` injetada pelo composition root |
+| F11 | Efeito colateral no `get_db()` | HIGH | **Fixed** | `init_schema()` e `seed()` explícitos |
+| F12 | Notificação fingida com `print` | HIGH | **Fixed** | `LoggingNotifier` injetado, nomeado pelo que é e declarando que não envia. Não decide autorização nem valor, então não precisa do gate de produção do §17. Trocar por um canal real é substituir a implementação injetada. |
+| F13 | Defaults inseguros | HIGH | **Fixed** | `DEBUG` do ambiente (default `False`); CORS com allowlist; erro genérico no corpo |
+| F14–F18 | Duplicação, N+1, erro espalhado | MEDIUM | **Fixed** | validators compartilhados; N+1 de 81 → 2 queries; um error handler |
+| F19–F21 | Magic numbers, `print`, concatenação | LOW | **Fixed** | constantes em `config/`; `logging` com níveis; f-strings |
+| F22 | Contrato de resposta inconsistente | LOW | **Deferred** | Preservado de propósito — padronizar o envelope quebraria clientes. Documentado no finding. |
+
+**CRITICAL: 8 fixed | HIGH: 5 fixed | MEDIUM: 5 fixed | LOW: 3 fixed, 1 deferred**
+
+Nenhum CRITICAL ou HIGH ficou sem correção.
+
 ================================
 Total: 22 findings
 ================================

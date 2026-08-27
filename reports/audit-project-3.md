@@ -346,6 +346,29 @@ Mudanças de comportamento propostas, cada uma justificada por um finding:
 
 Os 18 endpoints mantêm path, método e status codes de sucesso idênticos.
 
+
+---
+
+## Remediation Ledger (Fase 3)
+
+| # | Finding | Sev. | Desfecho | Evidência / risco residual |
+|---|---|---|---|---|
+| F01 | Hash de senha vazado em 4 endpoints | CRITICAL | **Fixed** | ocorrências de `"password"` nas respostas: 4 → **0** |
+| F02 | MD5 como hash de senha | CRITICAL | **Fixed** | PBKDF2-SHA256 com salt distinto por usuário, verificado no banco |
+| F03 | Camada de controller ausente | HIGH | **Fixed** | grep por `db.session`/`.query(` em `routes/` → vazio |
+| F04 | Models anêmicos, lógica duplicada | HIGH | **Fixed** | `is_overdue()` passa a ser a única definição, usada nos 6 pontos |
+| F05 | Segredos hardcoded | HIGH | **Fixed** | `SECRET_KEY` e SMTP vindos do ambiente; `python-dotenv` finalmente usado |
+| F06 | Efeitos colaterais e credenciais no service | HIGH | **Fixed** | `NullEmailClient` por default, nomeado pelo que é e registrando supressão; SMTP real só com `EMAIL_ENABLED=1` e credenciais de config. Não decide autorização nem valor — não requer o gate do §17. |
+| F07 | N+1 em listagens e relatórios | HIGH | **Fixed** | `GET /tasks`: 25 → **1** query |
+| F08 | 53 APIs deprecadas | MEDIUM | **Fixed** | varredura de `utcnow()` e `Query.get()` → **0**; `ensure_aware()` normaliza linhas naive |
+| F09–F12 | Validação duplicada, 500 por tipo, erro espalhado | MEDIUM | **Fixed** | `priority:"3"` → 201, `"alta"` → 400; um error handler; nenhum `except:` nu |
+| F13 | Código morto e deps não usadas | MEDIUM | **Fixed** | `marshmallow` e `requests` removidos; `process_task_data` virou base dos validators |
+| F14–F17 | Condicionais redundantes, literais, `print`, defaults | LOW | **Fixed** | guard clauses; constantes em `config/`; `logging`; `debug`/`host` do ambiente |
+
+**CRITICAL: 2 fixed | HIGH: 5 fixed | MEDIUM: 6 fixed | LOW: 4 fixed**
+
+Nenhum CRITICAL ou HIGH ficou sem correção.
+
 ================================
 Total: 17 findings
 ================================

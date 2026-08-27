@@ -176,14 +176,22 @@ For sort columns: `if sort not in ALLOWED_SORTS: raise ValidationError(...)` the
 
 ---
 
-## §4 — Remove arbitrary-execution and unguarded destructive endpoints  (AP-C04, AP-C07)
+## §4 — Neutralize arbitrary-execution and unguarded destructive endpoints  (AP-C04, AP-C07)
 
-There is no safe way to expose "run this SQL". Delete the route. For destructive admin
-operations, either delete them or put them behind an auth guard **and** an explicit
-confirmation parameter.
+Two different fixes, and picking the wrong one is itself a defect.
 
-**Before**
+| Situation | Fix |
+|---|---|
+| The capability has **no legitimate API caller** (run arbitrary SQL, wipe the database) | **Remove** the route. Re-expose it as an operator CLI script if the capability is still needed. |
+| The operation is a **legitimate REST verb** on a resource (`DELETE /api/users/:id`) | **Keep** the route and **gate** it. Removing it would break the API. |
+
+What both branches share: after the fix, the destructive capability must not be reachable by an
+anonymous caller. "Reachable but documented as risky" is not a fix.
+
+### Branch A — remove, and re-expose as a CLI task
+
 ```python
+# Before: any anonymous caller wipes every table.
 @app.route("/admin/query", methods=["POST"])
 def executar_query():
     cursor.execute(request.get_json().get("sql", ""))   # arbitrary SQL from the internet
@@ -193,27 +201,54 @@ def reset_database():
     cursor.execute("DELETE FROM pedidos")               # no auth at all
 ```
 
-**After** — `/admin/query` is gone. The reset survives only as a CLI task:
 ```python
-# scripts/reset_db.py — runnable by an operator with shell access, not by an HTTP caller
+# After: /admin/query is gone entirely. The reset survives only where a shell is required,
+# behind an explicit opt-in that cannot be set by accident.
+# scripts/reset_db.py
 if __name__ == "__main__":
     if os.environ.get("ALLOW_DB_RESET") != "yes":
         raise SystemExit("Set ALLOW_DB_RESET=yes to run this destructive script.")
     reset_all_tables()
 ```
 
-If a route must stay, guard it:
-```python
-@admin_bp.route("/admin/reset-db", methods=["POST"])
-@require_role("admin")
-def reset_database():
-    ...
+### Branch B — keep the route, gate the access
+
+Use the project's existing auth if it has one. When the project has **no** auth system at all,
+do not invent a login flow the audit did not ask for: apply the same shape as Branch A — a
+shared operator credential read from config, and **fail closed** when it is unset.
+
+```js
+// middlewares/requireAdminToken.js
+const { config } = require('../config');
+const { AppError } = require('../errors/AppError');
+
+module.exports = function requireAdminToken(req, res, next) {
+    // Fail closed: with no token configured the endpoint is disabled, not open.
+    if (!config.adminApiToken) {
+        return next(new AppError('Endpoint administrativo desabilitado', 503));
+    }
+    const provided = (req.get('authorization') || '').replace(/^Bearer /i, '');
+    if (!provided || !timingSafeEqualStr(provided, config.adminApiToken)) {
+        return next(new AppError('Não autorizado', 401));
+    }
+    return next();
+};
 ```
 
-Removing a route is a behaviour change — list it under "Behaviour changes" with the finding ID.
+```js
+// routes/userRoutes.js — the guard sits in front of the destructive verb only
+router.delete('/api/users/:id', requireAdminToken, (req, res, next) => { /* ... */ });
+```
 
-**Check:** `POST /admin/query` returns 404. No handler passes request data to `execute`,
-`eval`, `exec` or a shell.
+Compare the credential with a constant-time comparison, never `===` on the raw string.
+
+Gating a previously open route **is** a behaviour change: callers that used to get 200 now get
+401. List it under "Behaviour changes" with the finding ID, and update any request samples
+(`api.http`, README curl snippets) so the documented examples still work.
+
+**Check:** the arbitrary-execution route returns 404. The destructive route returns 401 without
+a credential and 200 with one. No handler passes request data to `execute`, `eval`, `exec` or a
+shell.
 
 ---
 
@@ -807,6 +842,82 @@ Guard clauses replace nested pyramids:
 ```
 
 **Check:** behaviour identical; the diff is renames and expression simplification only.
+
+---
+
+## §17 — Make simulated integrations fail closed  (AP-C01, AP-C05, AP-H04)
+
+Legacy code often *pretends* to talk to an external system: a payment "gateway" that approves by
+inspecting a string, an email sender that is a `print`, an auth check that always passes. Moving
+that logic behind an interface (§1, §10) improves the architecture but **does not remove the
+risk** — the stub still returns an authoritative-looking answer, and now it looks trustworthy
+because it lives in `services/`.
+
+A refactor cannot conjure a real integration. What it must do is make the stub impossible to
+mistake for the real thing:
+
+1. **Name it for what it is.** `SimulatedPaymentGateway`, not `PaymentGateway`.
+2. **Make the mode explicit in config**, never an implicit default.
+3. **Fail closed in production.** The composition root refuses to wire a stub when the
+   environment says production. Booting is where this must fail — not the first request.
+4. **Announce it at boot and on every call**, at `warn` level.
+5. **Report the residual risk** in the Phase 3 summary. The finding is mitigated, not fixed.
+
+**Before** — the decision is inline, and indistinguishable from a real integration:
+```js
+let status = cc.startsWith("4") ? "PAID" : "DENIED";
+```
+
+**After** — still simulated, but it can no longer be mistaken for, or deployed as, the real thing:
+```js
+class SimulatedPaymentGateway {
+    constructor({ approvedCardPrefix }) {
+        this.approvedCardPrefix = approvedCardPrefix;
+        logger.warn(
+            'SimulatedPaymentGateway ativo: nenhuma cobrança real é feita. '
+            + 'Não utilize em produção.',
+        );
+    }
+
+    async charge({ card, amount }) {
+        logger.warn(`[SIMULADO] Aprovação decidida localmente para ${logger.maskCard(card)}`);
+        return {
+            status: String(card).startsWith(this.approvedCardPrefix) ? 'PAID' : 'DENIED',
+            simulated: true,          // callers and stored rows can tell it apart
+        };
+    }
+}
+```
+
+```js
+// config/index.js — the mode is explicit, and production has no default
+paymentMode: process.env.PAYMENT_MODE || (isProduction ? '' : 'simulated'),
+
+function validate() {
+    if (config.isProduction && config.payment.mode !== 'live') {
+        throw new Error(
+            'PAYMENT_MODE must be "live" in production — refusing to boot with a simulated gateway',
+        );
+    }
+}
+```
+
+```js
+// app.js — the composition root picks the implementation and has no silent fallback
+function buildPaymentGateway() {
+    if (config.payment.mode === 'live') {
+        throw new Error('Live payment gateway not implemented — integrate a real provider here');
+    }
+    return new SimulatedPaymentGateway({ ... });
+}
+```
+
+The `throw` on the `live` branch is deliberate: an unimplemented integration must be a loud
+failure at boot, not a silent fallback to the stub.
+
+**Check:** `NODE_ENV=production` without the live mode refuses to boot. Development boots and
+logs the simulation warning. The stub's name contains "Simulated". The Phase 3 summary lists the
+finding as mitigated with its residual risk.
 
 ---
 
