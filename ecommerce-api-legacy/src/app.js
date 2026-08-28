@@ -17,13 +17,29 @@ const CourseModel = require('./models/CourseModel');
 const EnrollmentModel = require('./models/EnrollmentModel');
 const PaymentModel = require('./models/PaymentModel');
 const AuditLogModel = require('./models/AuditLogModel');
-const { PaymentGateway } = require('./services/PaymentGateway');
+const { SimulatedPaymentGateway } = require('./services/PaymentGateway');
 const CheckoutController = require('./controllers/CheckoutController');
 const ReportController = require('./controllers/ReportController');
 const UserController = require('./controllers/UserController');
 const registerRoutes = require('./routes');
 const { errorHandler, notFoundHandler } = require('./middlewares/errorHandler');
 const logger = require('./utils/logger');
+
+/**
+ * Picks the payment implementation. No silent fallback: an unimplemented live
+ * integration is a loud failure at boot, not a quiet downgrade to the simulator.
+ */
+function buildPaymentGateway() {
+    if (config.payment.mode === 'live') {
+        throw new Error(
+            'Live payment gateway not implemented — integrate a real provider behind '
+                + 'the charge() interface before setting PAYMENT_MODE=live',
+        );
+    }
+    return new SimulatedPaymentGateway({
+        approvedCardPrefix: config.payment.approvedCardPrefix,
+    });
+}
 
 async function buildApp({ db: injectedDb, paymentGateway: injectedGateway } = {}) {
     validate();
@@ -40,11 +56,7 @@ async function buildApp({ db: injectedDb, paymentGateway: injectedGateway } = {}
     const paymentModel = new PaymentModel(db);
     const auditLogModel = new AuditLogModel(db);
 
-    const paymentGateway = injectedGateway
-        || new PaymentGateway({
-            apiKey: config.payment.gatewayKey,
-            approvedCardPrefix: config.payment.approvedCardPrefix,
-        });
+    const paymentGateway = injectedGateway || buildPaymentGateway();
 
     const controllers = {
         checkout: new CheckoutController({

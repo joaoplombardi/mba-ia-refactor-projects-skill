@@ -23,7 +23,9 @@ Todos os valores vêm do ambiente — veja `.env.example`. Nenhum segredo está 
 | `SEED_ON_BOOT` | `1` | Popula o banco vazio no boot. |
 | `LOG_LEVEL` | `info` | `error`, `warn`, `info` ou `debug`. |
 | `PAYMENT_GATEWAY_KEY` | — | Obrigatória em produção. |
+| `PAYMENT_MODE` | `simulated` fora de produção | `simulated` não cobra nada. Produção exige `live` explícito. |
 | `APPROVED_CARD_PREFIX` | `4` | Prefixo de cartão aprovado pelo gateway simulado. |
+| `ADMIN_API_TOKEN` | — | Habilita `DELETE /api/users/:id`. Sem ele o endpoint responde 503. |
 
 > A chave `pk_live_...` que estava fixa em `src/utils.js` precisa ser **rotacionada**: removê-la
 > do código não a remove do histórico do git.
@@ -56,3 +58,20 @@ Os 3 endpoints mantêm path, método e status codes idênticos. As diferenças:
 - **Número de cartão e chave do gateway não são mais logados.** O log registra apenas os 4 últimos
   dígitos.
 - **`card` não-string devolve 400** em vez de derrubar o processo.
+- **`DELETE /api/users/:id` exige `Authorization: Bearer <ADMIN_API_TOKEN>`** (finding F11). Sem
+  credencial devolve 401; sem `ADMIN_API_TOKEN` configurado, 503 — o endpoint fica desabilitado,
+  nunca aberto. Antes qualquer chamador anônimo apagava qualquer conta.
+
+## Pagamento: o gateway é simulado
+
+`SimulatedPaymentGateway` **não cobra nada** — aprova pelo prefixo do cartão, que era a regra do
+código legado (finding F05). A refatoração não cria uma integração real; o que ela garante é que o
+simulador não possa ser confundido com um gateway de verdade:
+
+- avisa em `warn` no boot e a cada cobrança;
+- marca o resultado com `simulated: true`;
+- em produção a aplicação **recusa bootar** sem `PAYMENT_MODE=live`;
+- com `PAYMENT_MODE=live` também recusa bootar, porque não há provedor real integrado.
+
+**Risco residual:** em desenvolvimento e staging, qualquer cartão começando com `4` matricula sem
+pagar. Fechar isso exige integrar um provedor real atrás da interface `charge()`.

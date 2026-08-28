@@ -311,13 +311,52 @@ Mudanças de comportamento propostas, cada uma justificada por um finding:
    autenticar com o hash antigo — como não existe endpoint de login neste projeto, o impacto
    observável é nulo, mas o banco é `:memory:` e reinicia limpo a cada boot de qualquer forma.
 5. **A aprovação de pagamento continua simulada** (F05), agora isolada atrás de
-   `services/PaymentGateway` com a mesma regra (`card` iniciando em `4` → `PAID`), para preservar o
-   comportamento dos exemplos em `api.http`. A troca por um gateway real fica como ponto de extensão
-   documentado — mudar a regra agora quebraria os testes manuais existentes.
+   `services/SimulatedPaymentGateway` com a mesma regra (`card` iniciando em `4` → `PAID`), para
+   preservar o comportamento dos exemplos em `api.http`. O gateway falha fechado: em produção a
+   aplicação **recusa bootar** sem `PAYMENT_MODE=live`, e `live` sem integração real também recusa
+   bootar. Ver o ledger de remediação abaixo — este finding está *mitigado*, não corrigido.
+6. **`DELETE /api/users/:id` passa a exigir credencial** (F11). Sem o header
+   `Authorization: Bearer <ADMIN_API_TOKEN>` a resposta passa de 200 para 401; sem
+   `ADMIN_API_TOKEN` configurado, o endpoint responde 503 (desabilitado, não aberto).
 6. **`POST /api/checkout` com `card` não-string passa a devolver 400** em vez de derrubar o processo
    (F13).
 
 Os 3 endpoints mantêm path, método e status codes de sucesso idênticos.
+
+
+---
+
+## Remediation Ledger (Fase 3)
+
+Resultado de cada finding após a refatoração. Toda entrada CRITICAL/HIGH tem a sonda que comprova
+o desfecho.
+
+| # | Finding | Sev. | Desfecho | Evidência / risco residual |
+|---|---|---|---|---|
+| F01 | God Class | CRITICAL | **Fixed** | `AppManager.js` não existe; nenhum arquivo casa rota + SQL |
+| F02 | Credenciais hardcoded | CRITICAL | **Fixed** | grep por `pk_live_\|senha_super_secreta\|admin_master` → vazio; tudo em `process.env` |
+| F03 | Cartão e chave em log | CRITICAL | **Fixed** | log grava `****4444`; a chave nunca aparece |
+| F04 | Criptografia falsa | CRITICAL | **Fixed** | `badCrypto()` removido; `scrypt` com salt por usuário |
+| F05 | Aprovação por string do cliente | CRITICAL | **Mitigated** | Isolado em `SimulatedPaymentGateway`, resultado marcado `simulated: true`, warn no boot e por chamada. `NODE_ENV=production` sem `PAYMENT_MODE=live` **recusa bootar**; `live` sem provedor real também recusa. **Risco residual:** em dev/staging, um cartão com prefixo `4` matricula sem pagar. Fechar exige integrar um provedor real atrás de `charge()` — fora do escopo de uma refatoração. |
+| F06 | Sem transação; órfãos | CRITICAL | **Fixed** | rollback verificado (matrículas 1→1 sob falha); zero `Unknown` no relatório após DELETE |
+| F07 | Pirâmide de callbacks | HIGH | **Fixed** | 6 chamadas consecutivas ao relatório devolvem a mesma ordem |
+| F08 | Estado global mutável | HIGH | **Fixed** | `globalCache` e `totalRevenue` removidos |
+| F09 | Dependências hardcoded | HIGH | **Fixed** | tudo injetado por construtor; `buildApp()` aceita `db` e `paymentGateway` |
+| F10 | Rota + SQL na mesma função | HIGH | **Fixed** | grep por SQL em `controllers/`, `routes/`, `middlewares/` → vazio |
+| F11 | Endpoint destrutivo sem auth | HIGH | **Fixed** | `requireAdminToken` aplicado. Sem credencial → **401**; token errado → 401; sem `ADMIN_API_TOKEN` → **503** (fail closed); com token → 200 |
+| F12 | Erro espalhado / ignorado | MEDIUM | **Fixed** | um `errorHandler` registrado após as rotas; nenhum `err` ignorado |
+| F13 | Validação ausente | MEDIUM | **Fixed** | `card` numérico → 400, processo sobrevive |
+| F14 | APIs legadas | MEDIUM | **Fixed** | `.verbose()` removido; driver promisificado |
+| F15 | Nomes ruins | LOW | **Fixed** | desestruturação com alias; formato de wire preservado |
+| F16 | Magic values | LOW | **Fixed** | movidos para `config/` |
+| F17 | `console.log` como log | LOW | **Fixed** | `utils/logger.js` com níveis |
+| F18 | Contrato inconsistente | LOW | **Deferred** | Preservado de propósito: padronizar o envelope quebraria clientes existentes. Requer decisão de versionamento da API. |
+
+**CRITICAL: 5 fixed, 1 mitigated | HIGH: 5 fixed, 0 mitigated | MEDIUM: 3 fixed | LOW: 3 fixed, 1 deferred**
+
+> F05 é o único finding CRITICAL/HIGH que não está corrigido. Uma refatoração não cria um provedor
+> de pagamento; o que ela pode fazer — e fez — é impedir que o simulador seja confundido com um
+> gateway real ou chegue a produção. A correção definitiva é uma tarefa de integração.
 
 ================================
 Total: 18 findings

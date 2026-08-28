@@ -3,33 +3,44 @@
 const logger = require('../utils/logger');
 
 /**
- * The external payment system, behind an interface a controller can fake.
+ * SIMULATED payment gateway — it makes no network call and charges nothing.
  *
- * The legacy code decided approval inline with `cc.startsWith("4")`, logging the
- * full card number and the live gateway key next to it. The rule is preserved
- * here so the documented api.http examples keep behaving the same, but it is now
- * isolated at the boundary: swapping in a real gateway means replacing this class
- * and nothing else.
+ * Approval is decided locally from the card prefix, which is the legacy rule
+ * (audit finding F05). A refactor cannot conjure a real payment provider, so the
+ * finding is *mitigated*, not fixed: the dangerous decision is isolated at the
+ * boundary, named for what it is, announced at boot and on every call, marks its
+ * own results with `simulated: true`, and the composition root refuses to boot
+ * with it in production.
+ *
+ * Residual risk: in development and staging, anyone who sends a card number
+ * starting with the approved prefix is enrolled without paying. Closing it
+ * requires integrating a real provider behind this same interface.
  */
-class PaymentGateway {
-    constructor({ apiKey, approvedCardPrefix }) {
-        this.apiKey = apiKey;
+class SimulatedPaymentGateway {
+    constructor({ approvedCardPrefix }) {
         this.approvedCardPrefix = approvedCardPrefix;
+        logger.warn(
+            'SimulatedPaymentGateway ativo: nenhuma cobrança real é processada. '
+                + 'Não utilize em produção.',
+        );
     }
 
     async charge({ card, amount }) {
-        // Only the last four digits are logged, and never the key.
-        logger.info(`Processando pagamento de ${amount} no cartão ${logger.maskCard(card)}`);
+        // Only the last four digits are logged, and never a gateway key.
+        logger.warn(
+            `[SIMULADO] Aprovação decidida localmente para ${logger.maskCard(card)} `
+                + `(valor ${amount})`,
+        );
         const approved = String(card).startsWith(this.approvedCardPrefix);
-        return { status: approved ? 'PAID' : 'DENIED' };
+        return { status: approved ? 'PAID' : 'DENIED', simulated: true };
     }
 }
 
 /** Test double: approves everything without touching the network. */
 class AlwaysApprovedGateway {
     async charge() {
-        return { status: 'PAID' };
+        return { status: 'PAID', simulated: true };
     }
 }
 
-module.exports = { PaymentGateway, AlwaysApprovedGateway };
+module.exports = { SimulatedPaymentGateway, AlwaysApprovedGateway };

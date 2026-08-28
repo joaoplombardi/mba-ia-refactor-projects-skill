@@ -117,20 +117,43 @@ Only after an explicit `y`. Read `references/architecture-guidelines.md` and
 3. **Transform, do not rewrite.** For each finding from Phase 2, apply the matching pattern from
    `refactoring-playbook.md`. Move logic between layers; do not reinvent behaviour. Port the
    existing validation rules verbatim into the new validation layer.
-4. **Fix every CRITICAL and HIGH finding.** Parameterize all SQL. Move secrets to environment
-   variables with a `.env.example` and a safe local default so the app still boots out of the
-   box. Remove sensitive fields from responses. Delete or lock down arbitrary-query and
-   unauthenticated destructive endpoints — if you remove a route, list it under "Behaviour
-   changes". Fix MEDIUM and LOW findings where the fix is local and low risk.
+4. **Resolve every finding you reported — and prove it, one by one.**
+   Phase 2 produced a numbered list. Walk it in order, `F01` to `Fnn`, and give each finding one
+   of exactly two outcomes. There is no third option, and "the refactor improved this area" is
+   not an outcome.
+
+   - **Fixed** — the detection signal for that finding no longer matches the code, and you can
+     show the check that proves it.
+   - **Mitigated** — the risk is materially reduced but not eliminated, because eliminating it
+     needs something outside the scope of a refactor (a real payment provider, an identity
+     system, a schema migration). A mitigation is only valid if it satisfies all three:
+     the dangerous path is no longer reachable by an anonymous caller **or** is made
+     impossible to mistake for a working implementation (playbook §17); the residual risk is
+     stated in one sentence; and the code says so at the call site.
+
+   **CRITICAL and HIGH findings may not be left at Mitigated by default.** Prefer Fixed. Reach
+   for Mitigated only after establishing that no in-scope fix exists, and say what the
+   out-of-scope fix would be. MEDIUM and LOW may also be **Deferred**, with a reason.
+
+   Concretely, before you move on: all SQL parameterized; secrets in environment variables with a
+   `.env.example` and a dev-safe default; sensitive fields out of responses; arbitrary-execution
+   routes removed and destructive routes gated (playbook §4 — pick the right branch: remove when
+   there is no legitimate API caller, gate when there is); simulated integrations failing closed
+   (playbook §17).
+
 5. **Validate, and show your evidence.**
    - Boot the app. It must start with no traceback and no import error.
    - Exercise **every** route from the step-1 checklist against the running app; compare
      status codes and response shapes to the baseline.
-   - Re-run the Phase 2 detection signals over the new tree and confirm the anti-patterns are gone.
+   - **Re-run each finding's own detection signal** over the new tree — not a generic sweep. A
+     finding is Fixed only when the grep or probe that found it comes back empty, or when a
+     request that used to demonstrate the bug now behaves correctly.
    - If anything fails, fix it and re-validate. Do not report success on an app you did not boot.
-6. Print the Phase 3 block: the new directory tree, a validation checklist with real results,
-   and an explicit "Behaviour changes" list (write "none" if the API is byte-for-byte
-   compatible).
+
+6. **Print the Phase 3 block, including the remediation ledger.** The ledger is not optional and
+   must cover every finding from Phase 2 — the counts have to reconcile with the Phase 2 summary.
+   If a CRITICAL or HIGH is anything other than Fixed, say so in the terminal in plain language
+   rather than burying it in the table.
 
 ```
 ================================
@@ -139,10 +162,19 @@ PHASE 3: REFACTORING COMPLETE
 New Project Structure:
 <tree>
 
+Remediation ledger
+| Finding | Severity | Outcome | Evidence / residual risk |
+|---------|----------|---------|--------------------------|
+| F01 ... | CRITICAL | Fixed   | <the check that proves it> |
+| F05 ... | CRITICAL | Mitigated | <what remains, and the out-of-scope fix> |
+...
+CRITICAL: <n> fixed, <n> mitigated | HIGH: <n> fixed, <n> mitigated
+MEDIUM: <n> fixed, <n> deferred | LOW: <n> fixed, <n> deferred
+
 Validation
   ✓ Application boots without errors
   ✓ All <N> endpoints respond correctly
-  ✓ Zero anti-patterns remaining
+  ✓ Every finding re-checked against its own detection signal
 
 Behaviour changes
   - <change + the finding that justifies it>   (or "none")

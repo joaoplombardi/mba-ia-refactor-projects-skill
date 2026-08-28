@@ -89,10 +89,10 @@ existe de fato.
 ├── SKILL.md                              # o prompt: 3 fases, regras inegociáveis, tratamento de falha
 └── references/
     ├── project-analysis.md               # heurísticas de detecção (Fase 1)
-    ├── antipattern-catalog.md            # 28 anti-patterns com sinais de detecção (Fase 2)
+    ├── antipattern-catalog.md            # 29 anti-patterns com sinais de detecção (Fase 2)
     ├── report-template.md                # formato do relatório (Fase 2)
     ├── architecture-guidelines.md        # MVC alvo e regra de dependência (Fase 3)
-    └── refactoring-playbook.md           # 16 transformações com antes/depois (Fase 3)
+    └── refactoring-playbook.md           # 17 transformações com antes/depois (Fase 3)
 ```
 
 O `SKILL.md` é curto e instrui *o que fazer*; os arquivos de referência carregam o conhecimento de
@@ -169,6 +169,40 @@ A porta 3000 estava tomada por um túnel SSH em IPv4 enquanto o Node subia em IP
 capturar o baseline **com o app efetivamente rodando** e nunca reportar endpoint funcionando sem
 tê-lo chamado — e a configuração de porta virou variável de ambiente nos três projetos.
 
+
+### Iteração: quando a própria skill falhou
+
+A primeira execução no Projeto 2 deixou dois findings do relatório vivos no código: o
+`DELETE /api/users/:id` (F11, HIGH) continuou sem qualquer guard, e o `PaymentGateway.charge()`
+(F05, CRITICAL) seguiu decidindo aprovação pelo prefixo do cartão. O `SKILL.md` já mandava
+"Fix every CRITICAL and HIGH finding" — mas era uma frase, sem mecanismo que a cobrasse.
+
+Três mudanças saíram daí:
+
+1. **Playbook §4 reescrito com duas branches.** Havia um viés implícito para "delete the route",
+   que é certo para `/admin/query` e errado para `DELETE /api/users/:id` — um verbo REST legítimo,
+   cuja remoção quebraria a API. Agora a seção decide entre remover (sem chamador legítimo) e
+   *gatear* (verbo legítimo), com a regra comum: depois da correção, a capacidade destrutiva não
+   pode estar acessível a um chamador anônimo. "Acessível mas documentado como arriscado" não é
+   correção.
+2. **Playbook §17, novo — integrações simuladas devem falhar fechado.** Mover um stub para
+   `services/` melhora a arquitetura mas *não reduz o risco*: o stub continua devolvendo uma
+   resposta autoritativa, e agora parece confiável porque mora na camada certa. A seção exige
+   nomear pelo que é, tornar o modo explícito em config, recusar bootar em produção, avisar em
+   `warn`, e reportar o risco residual.
+3. **Fase 3 passou a exigir um ledger de remediação.** Cada finding de `F01` a `Fnn` recebe
+   *Fixed* ou *Mitigated*, e "Mitigated" só vale com três condições: caminho perigoso inacessível
+   anonimamente ou impossível de confundir com implementação real, risco residual declarado em uma
+   frase, e o código dizendo isso no ponto de uso. A validação passou a re-rodar **o sinal de
+   detecção de cada finding**, não uma varredura genérica. Os três relatórios em `reports/` trazem
+   esse ledger.
+
+Com a skill corrigida, a Fase 3 rodou de novo no Projeto 2: F11 virou *Fixed* (401 sem credencial,
+503 sem `ADMIN_API_TOKEN` — desabilitado, nunca aberto) e F05 virou *Mitigated* — o único
+CRITICAL/HIGH dos três projetos que não está corrigido, porque uma refatoração não cria um provedor
+de pagamento. O que ela garante é que o simulador não chegue a produção: `NODE_ENV=production` sem
+`PAYMENT_MODE=live` recusa bootar, e `live` sem integração real também recusa.
+
 ---
 
 ## C) Resultados
@@ -186,6 +220,7 @@ tê-lo chamado — e a configuração de porta virou variável de ambiente nos t
 | **Credenciais em resposta** | 2 endpoints → **0** | cartão em log → mascarado | 4 endpoints → **0** |
 | **Transações** | nenhuma → em toda escrita múltipla | nenhuma → checkout e delete | commit único → delete atômico |
 | **Tratamento de erro** | 20 blocos duplicados → **1** | 7 blocos + 4 erros ignorados → **1** | 7 `except:` nus → **1** |
+| **Endpoint destrutivo anônimo** | 2 → **0** (removidos) | 1 → **0** (gateado) | 0 |
 | **APIs deprecadas** | 0 | 2 → **0** | 53 → **0** |
 | **Queries (endpoint de listagem)** | 81 → **2** | 1+N+2N → **2** | 25 → **1** |
 
@@ -222,6 +257,7 @@ espremido não ocupava.
 - [x] Entry point claro — composition root explícito
 - [x] Aplicação inicia sem erros
 - [x] Endpoints originais respondem corretamente
+- [x] Ledger de remediação cobre todos os findings — **15 CRITICAL fixed, 1 mitigated; 15 HIGH fixed**
 
 ### Logs de validação
 

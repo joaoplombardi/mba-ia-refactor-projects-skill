@@ -27,5 +27,12 @@ Content-Type: application/json
 ### Relatório financeiro administrativo
 GET {{baseUrl}}/api/admin/financial-report
 
-### Deletar usuário
+### Deletar usuário — exige credencial de administrador (finding F11)
+# Suba a aplicação com ADMIN_API_TOKEN definido e use o mesmo valor aqui.
+@adminToken = token-de-teste
+
+DELETE {{baseUrl}}/api/users/1
+Authorization: Bearer {{adminToken}}
+
+### Deletar usuário sem credencial — deve responder 401
 DELETE {{baseUrl}}/api/users/1
